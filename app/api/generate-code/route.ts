@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server';
 import { LLMProvider } from '@/lib/providers/config';
 import { createProviderClient } from '@/lib/providers/provider';
+import { DEFAULT_SYSTEM_PROMPT, THINKING_SYSTEM_PROMPT } from '@/lib/providers/prompts';
 
 export async function POST(request: NextRequest) {
   try {
     // Parse the JSON body
-    const { prompt, model, provider: providerParam, customSystemPrompt, maxTokens } = await request.json();
+    const { prompt, model, provider: providerParam, customSystemPrompt, maxTokens, systemPromptType } = await request.json();
 
     // Check if prompt and model are provided
     if (!prompt || !model) {
@@ -28,13 +29,24 @@ export async function POST(request: NextRequest) {
       provider = (process.env.DEFAULT_PROVIDER as LLMProvider) || LLMProvider.DEEPSEEK;
     }
 
+    // Determine the final system prompt based on type or custom input
+    let finalSystemPrompt = customSystemPrompt;
+
+    if (!finalSystemPrompt) {
+      if (systemPromptType === 'thinking') {
+        finalSystemPrompt = THINKING_SYSTEM_PROMPT;
+      } else {
+        // Fallback to default
+        finalSystemPrompt = DEFAULT_SYSTEM_PROMPT;
+      }
+    }
+
     // Create the provider client
     const providerClient = createProviderClient(provider);
 
-    // Generate code with the selected provider and custom system prompt if provided
-    const stream = await providerClient.generateCode(prompt, model, customSystemPrompt || null, parsedMaxTokens);
+    // Generate code with the selected provider and system prompt
+    const stream = await providerClient.generateCode(prompt, model, finalSystemPrompt, parsedMaxTokens);
 
-    // Return the stream as response
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',

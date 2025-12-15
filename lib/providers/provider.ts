@@ -40,15 +40,12 @@ class OpenAICompatibleProvider implements LLMProviderClient {
   }
 
   async getModels() {
-    // If using the OPENAI_COMPATIBLE provider and an explicit model is set via
-    // the OPENAI_COMPATIBLE_MODEL environment variable, return that model
-    // instead of attempting to list models from the remote service (some
-    // third-party OpenAI-compatible providers do not support listing models).
+    // Return explicit model if set via env var (some providers don't support listing)
     const envModel = process.env.OPENAI_COMPATIBLE_MODEL;
     if (this.provider === LLMProvider.OPENAI_COMPATIBLE && envModel) {
       return [{ id: envModel, name: envModel }];
     }
-    
+
     const response = await this.client.models.list();
 
     // Remove duplicates based on model ID
@@ -63,7 +60,6 @@ class OpenAICompatibleProvider implements LLMProviderClient {
   }
 
   async generateCode(prompt: string, model: string, customSystemPrompt?: string | null, maxTokens?: number) {
-    // Use custom system prompt if provided, otherwise use default
     const systemPromptToUse = customSystemPrompt || SYSTEM_PROMPT;
 
     const stream = await this.client.chat.completions.create({
@@ -72,7 +68,7 @@ class OpenAICompatibleProvider implements LLMProviderClient {
         { role: 'system', content: systemPromptToUse },
         { role: 'user', content: prompt }
       ],
-      max_tokens: maxTokens || undefined, // Use maxTokens if provided, otherwise let the API decide
+      max_tokens: maxTokens || undefined,
       stream: true,
     });
 
@@ -151,6 +147,7 @@ class OllamaProvider implements LLMProviderClient {
       return new ReadableStream({
         async start(controller) {
           const reader = response.body!.getReader();
+          let buffer = "";
 
           try {
             while (true) {
@@ -162,21 +159,24 @@ class OllamaProvider implements LLMProviderClient {
               }
 
               // Convert the chunk to text
-              const chunk = new TextDecoder().decode(value);
+              const chunk = new TextDecoder().decode(value, { stream: true });
+              buffer += chunk;
 
-              try {
-                // Ollama returns JSON objects separated by line breaks
-                const lines = chunk.split('\n').filter(line => line.trim());
+              const lines = buffer.split('\n');
+              // Keep the last line in the buffer as it might be incomplete
+              buffer = lines.pop() || "";
 
-                for (const line of lines) {
+              for (const line of lines) {
+                if (!line.trim()) continue;
+
+                try {
                   const data = JSON.parse(line);
                   if (data.response) {
                     controller.enqueue(textEncoder.encode(data.response));
                   }
+                } catch (e) {
+                  console.warn('Error parsing JSON line from Ollama:', e);
                 }
-              } catch (e) {
-                // If parsing fails, send the raw text
-                controller.enqueue(textEncoder.encode(chunk));
               }
             }
           } catch (error) {
