@@ -1,4 +1,12 @@
-import OpenAI from 'openai';
+import { createDeepSeek } from '@ai-sdk/deepseek';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createMistral } from '@ai-sdk/mistral';
+import { createCerebras } from '@ai-sdk/cerebras';
+import { createOllama } from 'ollama-ai-provider';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { streamText, LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from 'ai';
 import { LLMProvider, getProviderApiKey, getProviderBaseUrl } from './config';
 
 // Shared system prompt for all providers
@@ -7,96 +15,312 @@ export const SYSTEM_PROMPT = "You are an expert web developer AI. Your task is t
 // Common interface for all providers
 export interface LLMProviderClient {
   getModels: () => Promise<{ id: string; name: string }[]>;
-  generateCode: (prompt: string, model: string, customSystemPrompt?: string | null, maxTokens?: number) => Promise<ReadableStream<Uint8Array>>;
+  getModel: (modelId: string) => LanguageModel;
+}
+
+// Helper function to wrap a model with reasoning middleware for <think> tag extraction
+function wrapWithReasoningMiddleware(model: LanguageModel): LanguageModel {
+  return wrapLanguageModel({
+    model: model as Parameters<typeof wrapLanguageModel>[0]['model'],
+    middleware: extractReasoningMiddleware({ tagName: 'think' }),
+  }) as LanguageModel;
+}
+
+// Provider factory functions
+function getDeepSeekProvider() {
+  return createDeepSeek({ apiKey: getProviderApiKey(LLMProvider.DEEPSEEK) || '' });
+}
+
+function getOpenRouterProvider() {
+  return createOpenRouter({ apiKey: getProviderApiKey(LLMProvider.OPENROUTER) || '' });
+}
+
+function getAnthropicProvider() {
+  return createAnthropic({ apiKey: getProviderApiKey(LLMProvider.ANTHROPIC) || '' });
+}
+
+function getGoogleProvider() {
+  return createGoogleGenerativeAI({ apiKey: getProviderApiKey(LLMProvider.GOOGLE) || '' });
+}
+
+function getMistralProvider() {
+  return createMistral({ apiKey: getProviderApiKey(LLMProvider.MISTRAL) || '' });
+}
+
+function getCerebrasProvider() {
+  return createCerebras({ apiKey: getProviderApiKey(LLMProvider.CEREBRAS) || '' });
+}
+
+function getOpenAICompatibleProvider() {
+  return createOpenAICompatible({
+    name: 'openai_compatible',
+    baseURL: getProviderBaseUrl(LLMProvider.OPENAI_COMPATIBLE),
+    apiKey: getProviderApiKey(LLMProvider.OPENAI_COMPATIBLE) || '',
+  });
+}
+
+function getOllamaProvider() {
+  const baseUrl = getProviderBaseUrl(LLMProvider.OLLAMA);
+  return createOllama({ baseURL: `${baseUrl}/api` });
+}
+
+function getLMStudioProvider() {
+  return createOpenAICompatible({
+    name: 'lm_studio',
+    baseURL: getProviderBaseUrl(LLMProvider.LM_STUDIO),
+    apiKey: 'lm-studio',
+  });
 }
 
 // Factory function to create a provider client
 export function createProviderClient(provider: LLMProvider): LLMProviderClient {
   switch (provider) {
     case LLMProvider.DEEPSEEK:
-      return new OpenAICompatibleProvider(LLMProvider.DEEPSEEK);
+      return new DeepSeekProviderClient();
+    case LLMProvider.OPENROUTER:
+      return new OpenRouterProviderClient();
+    case LLMProvider.ANTHROPIC:
+      return new AnthropicProviderClient();
+    case LLMProvider.GOOGLE:
+      return new GoogleProviderClient();
+    case LLMProvider.MISTRAL:
+      return new MistralProviderClient();
+    case LLMProvider.CEREBRAS:
+      return new CerebrasProviderClient();
     case LLMProvider.OPENAI_COMPATIBLE:
-      return new OpenAICompatibleProvider(LLMProvider.OPENAI_COMPATIBLE);
+      return new OpenAICompatibleProviderClient();
     case LLMProvider.OLLAMA:
-      return new OllamaProvider();
+      return new OllamaProviderClient();
     case LLMProvider.LM_STUDIO:
-      return new LMStudioProvider();
+      return new LMStudioProviderClient();
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
 
-// OpenAI-compatible provider (OpenAI, Kluster.ai, Mistral, etc.)
-class OpenAICompatibleProvider implements LLMProviderClient {
-  private client: OpenAI;
-  private provider: LLMProvider;
-
-  constructor(provider: LLMProvider) {
-    this.provider = provider;
-    this.client = new OpenAI({
-      apiKey: getProviderApiKey(provider) || '',
-      baseURL: getProviderBaseUrl(provider),
-    });
-  }
+// DeepSeek Provider Client
+class DeepSeekProviderClient implements LLMProviderClient {
+  private provider = getDeepSeekProvider();
 
   async getModels() {
-    // Return explicit model if set via env var (some providers don't support listing)
-    const envModel = process.env.OPENAI_COMPATIBLE_MODEL;
-    if (this.provider === LLMProvider.OPENAI_COMPATIBLE && envModel) {
-      return [{ id: envModel, name: envModel }];
-    }
-
-    const response = await this.client.models.list();
-
-    // Remove duplicates based on model ID
-    const uniqueModels = Array.from(
-      new Map(response.data.map(model => [model.id, model])).values()
-    );
-
-    return uniqueModels.map((model) => ({
-      id: model.id,
-      name: model.id,
-    }));
+    // DeepSeek has fixed models (no public API for listing)
+    return [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+    ];
   }
 
-  async generateCode(prompt: string, model: string, customSystemPrompt?: string | null, maxTokens?: number) {
-    const systemPromptToUse = customSystemPrompt || SYSTEM_PROMPT;
-
-    const stream = await this.client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPromptToUse },
-        { role: 'user', content: prompt }
-      ],
-      max_tokens: maxTokens || undefined,
-      stream: true,
-    });
-
-    // Create a ReadableStream for the response
-    const textEncoder = new TextEncoder();
-    return new ReadableStream({
-      async start(controller) {
-        // Process the stream from OpenAI
-        for await (const chunk of stream) {
-          // Extract the text from the chunk
-          const content = chunk.choices[0]?.delta?.content || '';
-
-          // Send the text to the client
-          controller.enqueue(textEncoder.encode(content));
-        }
-        controller.close();
-      },
-    });
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
   }
 }
 
-// Ollama Provider implementation
-class OllamaProvider implements LLMProviderClient {
-  private baseUrl: string;
+// OpenRouter Provider Client
+class OpenRouterProviderClient implements LLMProviderClient {
+  private provider = getOpenRouterProvider();
 
-  constructor() {
-    this.baseUrl = getProviderBaseUrl(LLMProvider.OLLAMA);
+  async getModels() {
+    try {
+      const apiKey = getProviderApiKey(LLMProvider.OPENROUTER);
+      const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {},
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error fetching OpenRouter models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string; name?: string }) => ({
+        id: model.id,
+        name: model.name || model.id,
+      })) : [];
+    } catch (error) {
+      console.error('Error fetching OpenRouter models:', error);
+      throw new Error('Cannot fetch OpenRouter models. Check your API key.');
+    }
   }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider.chat(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Anthropic Provider Client
+class AnthropicProviderClient implements LLMProviderClient {
+  private provider = getAnthropicProvider();
+
+  async getModels() {
+    try {
+      const apiKey = getProviderApiKey(LLMProvider.ANTHROPIC);
+      const response = await fetch('https://api.anthropic.com/v1/models', {
+        headers: {
+          'x-api-key': apiKey || '',
+          'anthropic-version': '2023-06-01',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error fetching Anthropic models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string; display_name?: string }) => ({
+        id: model.id,
+        name: model.display_name || model.id,
+      })) : [];
+    } catch (error) {
+      console.error('Error fetching Anthropic models:', error);
+      throw new Error('Cannot fetch Anthropic models. Check your API key.');
+    }
+  }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Google AI Provider Client
+class GoogleProviderClient implements LLMProviderClient {
+  private provider = getGoogleProvider();
+
+  async getModels() {
+    try {
+      const apiKey = getProviderApiKey(LLMProvider.GOOGLE);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+
+      if (!response.ok) {
+        throw new Error(`Error fetching Google AI models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.models ? data.models
+        .filter((model: { name: string }) => model.name.includes('gemini'))
+        .map((model: { name: string; displayName?: string }) => ({
+          id: model.name.replace('models/', ''),
+          name: model.displayName || model.name.replace('models/', ''),
+        })) : [];
+    } catch (error) {
+      console.error('Error fetching Google AI models:', error);
+      throw new Error('Cannot fetch Google AI models. Check your API key.');
+    }
+  }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Mistral Provider Client
+class MistralProviderClient implements LLMProviderClient {
+  private provider = getMistralProvider();
+
+  async getModels() {
+    try {
+      const apiKey = getProviderApiKey(LLMProvider.MISTRAL);
+      const response = await fetch('https://api.mistral.ai/v1/models', {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error fetching Mistral models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string; name?: string }) => ({
+        id: model.id,
+        name: model.name || model.id,
+      })) : [];
+    } catch (error) {
+      console.error('Error fetching Mistral models:', error);
+      throw new Error('Cannot fetch Mistral models. Check your API key.');
+    }
+  }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Cerebras Provider Client
+class CerebrasProviderClient implements LLMProviderClient {
+  private provider = getCerebrasProvider();
+
+  async getModels() {
+    try {
+      const apiKey = getProviderApiKey(LLMProvider.CEREBRAS);
+      const response = await fetch('https://api.cerebras.ai/v1/models', {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error fetching Cerebras models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string }) => ({
+        id: model.id,
+        name: model.id,
+      })) : [];
+    } catch (error) {
+      console.error('Error fetching Cerebras models:', error);
+      throw new Error('Cannot fetch Cerebras models. Check your API key.');
+    }
+  }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Generic OpenAI-Compatible Provider Client
+class OpenAICompatibleProviderClient implements LLMProviderClient {
+  private provider = getOpenAICompatibleProvider();
+
+  async getModels() {
+    const envModel = process.env.OPENAI_COMPATIBLE_MODEL;
+    if (envModel) {
+      return [{ id: envModel, name: envModel }];
+    }
+
+    try {
+      const baseUrl = getProviderBaseUrl(LLMProvider.OPENAI_COMPATIBLE);
+      const apiKey = getProviderApiKey(LLMProvider.OPENAI_COMPATIBLE);
+      const response = await fetch(`${baseUrl}/models`, {
+        headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {},
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error fetching models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string }) => ({
+        id: model.id,
+        name: model.id,
+      })) : [];
+    } catch (error) {
+      console.error('Error fetching OpenAI-compatible models:', error);
+      throw new Error('Cannot fetch models. Check your API configuration.');
+    }
+  }
+
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
+  }
+}
+
+// Ollama Provider Client
+class OllamaProviderClient implements LLMProviderClient {
+  private provider = getOllamaProvider();
+  private baseUrl = getProviderBaseUrl(LLMProvider.OLLAMA);
 
   async getModels() {
     try {
@@ -106,7 +330,7 @@ class OllamaProvider implements LLMProviderClient {
       }
 
       const data = await response.json();
-      return data.models ? data.models.map((model: any) => ({
+      return data.models ? data.models.map((model: { name: string }) => ({
         id: model.name,
         name: model.name,
       })) : [];
@@ -116,134 +340,58 @@ class OllamaProvider implements LLMProviderClient {
     }
   }
 
-  async generateCode(prompt: string, model: string, customSystemPrompt?: string | null, maxTokens?: number) {
-    // Use custom system prompt if provided, otherwise use default
-    const systemPromptToUse = customSystemPrompt || SYSTEM_PROMPT;
-
-    try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          prompt: `${systemPromptToUse}\n\nUser request: ${prompt}`,
-          stream: true,
-          options: maxTokens ? { num_predict: maxTokens } : undefined, // Ollama uses num_predict for max tokens
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Error generating code with Ollama: ${response.statusText}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response received from Ollama server');
-      }
-
-      // Create a ReadableStream for the response
-      const textEncoder = new TextEncoder();
-      return new ReadableStream({
-        async start(controller) {
-          const reader = response.body!.getReader();
-          let buffer = "";
-
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-
-              if (done) {
-                controller.close();
-                break;
-              }
-
-              // Convert the chunk to text
-              const chunk = new TextDecoder().decode(value, { stream: true });
-              buffer += chunk;
-
-              const lines = buffer.split('\n');
-              // Keep the last line in the buffer as it might be incomplete
-              buffer = lines.pop() || "";
-
-              for (const line of lines) {
-                if (!line.trim()) continue;
-
-                try {
-                  const data = JSON.parse(line);
-                  if (data.response) {
-                    controller.enqueue(textEncoder.encode(data.response));
-                  }
-                } catch (e) {
-                  console.warn('Error parsing JSON line from Ollama:', e);
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Error reading Ollama stream:', error);
-            controller.error(error);
-          }
-        }
-      });
-    } catch (error) {
-      console.error('Error generating code with Ollama:', error);
-      throw error;
-    }
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
   }
 }
 
-// LM Studio Provider implementation
-class LMStudioProvider implements LLMProviderClient {
-  private client: OpenAI;
-
-  constructor() {
-    this.client = new OpenAI({
-      apiKey: 'lm-studio', // LM Studio accepts any API key
-      baseURL: getProviderBaseUrl(LLMProvider.LM_STUDIO),
-    });
-  }
+// LM Studio Provider Client
+class LMStudioProviderClient implements LLMProviderClient {
+  private provider = getLMStudioProvider();
+  private baseUrl = getProviderBaseUrl(LLMProvider.LM_STUDIO);
 
   async getModels() {
     try {
-      const response = await this.client.models.list();
-      return response.data.map((model) => ({
+      const response = await fetch(`${this.baseUrl}/models`);
+      if (!response.ok) {
+        throw new Error(`Error fetching LM Studio models: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data ? data.data.map((model: { id: string }) => ({
         id: model.id,
         name: model.id,
-      }));
+      })) : [];
     } catch (error) {
       console.error('Error fetching LM Studio models:', error);
       throw new Error('Cannot connect to LM Studio. Is the server running?');
     }
   }
 
-  async generateCode(prompt: string, model: string, customSystemPrompt?: string | null, maxTokens?: number) {
-    // Use custom system prompt if provided, otherwise use default
-    const systemPromptToUse = customSystemPrompt || SYSTEM_PROMPT;
-
-    const stream = await this.client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPromptToUse },
-        { role: 'user', content: prompt }
-      ],
-      max_tokens: maxTokens || undefined, // Use maxTokens if provided, otherwise let the API decide
-      stream: true,
-    });
-
-    // Create a ReadableStream for the response
-    const textEncoder = new TextEncoder();
-    return new ReadableStream({
-      async start(controller) {
-        // Process the stream from OpenAI
-        for await (const chunk of stream) {
-          // Extract the text from the chunk
-          const content = chunk.choices[0]?.delta?.content || '';
-
-          // Send the text to the client
-          controller.enqueue(textEncoder.encode(content));
-        }
-        controller.close();
-      },
-    });
+  getModel(modelId: string): LanguageModel {
+    const baseModel = this.provider(modelId) as unknown as LanguageModel;
+    return wrapWithReasoningMiddleware(baseModel);
   }
+}
+
+// Helper function to generate code using streamText with reasoning support
+export async function generateCodeStream(
+  provider: LLMProvider,
+  modelId: string,
+  prompt: string,
+  systemPrompt?: string | null,
+  maxTokens?: number
+): Promise<ReturnType<typeof streamText>> {
+  const client = createProviderClient(provider);
+  const model = client.getModel(modelId);
+
+  const result = streamText({
+    model,
+    system: systemPrompt || SYSTEM_PROMPT,
+    prompt,
+    ...(maxTokens ? { maxTokens } : {}),
+  });
+
+  return result;
 }

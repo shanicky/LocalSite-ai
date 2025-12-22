@@ -1,6 +1,6 @@
-# LocalSite AI - now with Thinking Model Support!
+# LocalSite AI - 0.5.0 Update!
 
-[Watch Demo Video](public/demo.mp4)
+> **What's new?** See the [Changelog](./CHANGELOG.md) for details.
 
 A modern web application that uses AI to generate HTML, CSS, and JavaScript code based on natural language prompts. Simply describe what you want to build, and the AI will create a complete, self-contained web page for you.
 
@@ -95,6 +95,36 @@ A modern web application that uses AI to generate HTML, CSS, and JavaScript code
    LM_STUDIO_API_BASE=http://localhost:1234/v1
    DEFAULT_PROVIDER=lm_studio
    ```
+### Cloud Models
+
+#### Cerebras (Create a Website in 3 seconds!)
+
+1. Visit [Cerebras](https://cloud.cerebras.ai/) and create an account or sign in.
+2. Navigate to the API keys section.
+3. Create a new API key and copy it.
+4. Set in your `.env.local` file:
+   ```
+   CEREBRAS_API_KEY=your_cerebras_api_key
+   ```
+
+#### Google Gemini
+
+1. Visit [Google AI Studio](https://aistudio.google.com) and create an account or sign in.
+2. Navigate to the API keys section.
+3. Create a new API key and copy it.
+4. Set in your `.env.local` file:
+   ```
+   GOOGLE_GENERATIVE_AI_API_KEY=your_google_api_key
+   ```
+#### Anthropic Claude
+
+1. Visit [Anthropic](https://console.anthropic.com) and create an account or sign in.
+2. Navigate to the API keys section.
+3. Create a new API key and copy it.
+4. Set in your `.env.local` file:
+   ```
+   ANTHROPIC_API_KEY=your_anthropic_api_key
+   ```
 
 ### DeepSeek
 
@@ -105,6 +135,26 @@ A modern web application that uses AI to generate HTML, CSS, and JavaScript code
    ```
    DEEPSEEK_API_KEY=your_deepseek_api_key
    DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+   ```
+
+#### OpenRouter
+
+1. Visit [OpenRouter](https://openrouter.ai) and create an account or sign in.
+2. Navigate to the API keys section.
+3. Create a new API key and copy it.
+4. Set in your `.env.local` file:
+   ```
+   OPENROUTER_API_KEY=your_openrouter_api_key
+   ```
+
+#### Mistral
+
+1. Visit [Mistral AI Studio](https://console.mistral.ai/) and create an account or sign in.
+2. Navigate to the API keys section.
+3. Create a new API key and copy it.
+4. Set in your `.env.local` file:
+   ```
+   MISTRAL_API_KEY=your_mistral_api_key
    ```
 
 ### Custom OpenAI-compatible API
@@ -168,7 +218,7 @@ The application can also be deployed on:
 - [x] Predefined provider: DeepSeek
 - [x] Custom OpenAI-compatible API support
 - [x] Support thinking models (Qwen3,DeepCoder, etc.)
-- [ ] Adding more predefined providers (Anthropic, Groq, etc.)
+- [x] Adding more predefined providers (Anthropic, Groq, etc.)
 
 ### Advanced Code Generation
 - [ ] Choose between different Frameworks and Libraries (React, Vue, Angular, etc.)

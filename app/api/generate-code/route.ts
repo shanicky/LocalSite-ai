@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { LLMProvider } from '@/lib/providers/config';
-import { createProviderClient } from '@/lib/providers/provider';
+import { generateCodeStream } from '@/lib/providers/provider';
 import { DEFAULT_SYSTEM_PROMPT, THINKING_SYSTEM_PROMPT } from '@/lib/providers/prompts';
 
 export async function POST(request: NextRequest) {
@@ -41,16 +41,47 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create the provider client
-    const providerClient = createProviderClient(provider);
+    // Generate code using Vercel AI SDK streamText
+    const result = await generateCodeStream(
+      provider,
+      model,
+      prompt,
+      finalSystemPrompt,
+      parsedMaxTokens
+    );
 
-    // Generate code with the selected provider and system prompt
-    const stream = await providerClient.generateCode(prompt, model, finalSystemPrompt, parsedMaxTokens);
+    // Create a custom stream that sends text and reasoning as separate JSON lines
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const part of result.fullStream) {
+            if (part.type === 'text-delta') {
+              // Send text content - in AI SDK v5, the property is 'text' not 'textDelta'
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'text', content: part.text }) + '\n')
+              );
+            } else if (part.type === 'reasoning-delta') {
+              // Send reasoning content (native reasoning models like deepseek-reasoner)
+              // In AI SDK v5, reasoning-delta uses 'text' property
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'reasoning', content: part.text }) + '\n')
+              );
+            }
+          }
+          controller.close();
+        } catch (error) {
+          console.error('Stream error:', error);
+          controller.error(error);
+        }
+      },
+    });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache',
+        'Transfer-Encoding': 'chunked',
       },
     });
   } catch (error) {

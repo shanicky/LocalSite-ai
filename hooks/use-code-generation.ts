@@ -10,6 +10,12 @@ interface GenerateCodeParams {
     customSystemPrompt?: string
 }
 
+// Interface for NDJSON stream parts
+interface StreamPart {
+    type: 'text' | 'reasoning'
+    content: string
+}
+
 export function useCodeGeneration() {
     const [generatedCode, setGeneratedCode] = useState("")
     const [isGenerating, setIsGenerating] = useState(false)
@@ -76,9 +82,10 @@ export function useCodeGeneration() {
                 throw new Error('Stream could not be read')
             }
 
-            let receivedText = ""
-            let thinkingText = ""
-            let isInThinkingBlock = false
+            let codeBuffer = ""
+            let reasoningBuffer = ""
+            let lineBuffer = ""
+            let hasReceivedReasoning = false
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -88,42 +95,57 @@ export function useCodeGeneration() {
                 }
 
                 const chunk = new TextDecoder().decode(value)
-                receivedText += chunk
+                lineBuffer += chunk
 
-                let cleanedCode = receivedText
+                // Process complete lines (NDJSON format)
+                const lines = lineBuffer.split('\n')
+                // Keep the last incomplete line in the buffer
+                lineBuffer = lines.pop() || ""
 
-                const thinkingStartIndex = cleanedCode.indexOf("<think>")
-                const thinkingEndIndex = cleanedCode.indexOf("</think>")
+                for (const line of lines) {
+                    if (!line.trim()) continue
 
-                if (thinkingStartIndex !== -1) {
-                    if (!isInThinkingBlock) {
-                        setIsThinking(true)
+                    try {
+                        const part: StreamPart = JSON.parse(line)
+
+                        if (part.type === 'text') {
+                            codeBuffer += part.content
+                            setGeneratedCode(codeBuffer.replace(/^```html\n/, '').replace(/```$/, ''))
+                        } else if (part.type === 'reasoning') {
+                            if (!hasReceivedReasoning) {
+                                setIsThinking(true)
+                                hasReceivedReasoning = true
+                            }
+                            reasoningBuffer += part.content
+                            setThinkingOutput(reasoningBuffer)
+                        }
+                    } catch (parseError) {
+                        // If JSON parse fails, it might be legacy plain text format
+                        // Try to handle it gracefully
+                        console.warn('Failed to parse stream part:', line, parseError)
                     }
-                    isInThinkingBlock = true
-
-                    if (thinkingEndIndex !== -1) {
-                        thinkingText = cleanedCode.substring(thinkingStartIndex + 7, thinkingEndIndex)
-                        cleanedCode = cleanedCode.substring(0, thinkingStartIndex) +
-                            cleanedCode.substring(thinkingEndIndex + 8)
-                        isInThinkingBlock = false
-                        setIsThinking(false)
-                    } else {
-                        thinkingText = cleanedCode.substring(thinkingStartIndex + 7)
-                        cleanedCode = cleanedCode.substring(0, thinkingStartIndex)
-                    }
-                    setThinkingOutput(thinkingText)
-                } else if (isInThinkingBlock && thinkingEndIndex !== -1) {
-                    thinkingText = cleanedCode.substring(0, thinkingEndIndex)
-                    cleanedCode = cleanedCode.substring(thinkingEndIndex + 8)
-                    isInThinkingBlock = false
-                    setIsThinking(false)
-                    setThinkingOutput(thinkingText)
                 }
+            }
 
-                cleanedCode = cleanedCode.replace(/^```html\n/, '')
-                cleanedCode = cleanedCode.replace(/```$/, '')
+            // Process any remaining content in the buffer
+            if (lineBuffer.trim()) {
+                try {
+                    const part: StreamPart = JSON.parse(lineBuffer)
+                    if (part.type === 'text') {
+                        codeBuffer += part.content
+                        setGeneratedCode(codeBuffer.replace(/^```html\n/, '').replace(/```$/, ''))
+                    } else if (part.type === 'reasoning') {
+                        reasoningBuffer += part.content
+                        setThinkingOutput(reasoningBuffer)
+                    }
+                } catch {
+                    // Ignore parse errors for incomplete lines
+                }
+            }
 
-                setGeneratedCode(cleanedCode)
+            // End thinking state
+            if (hasReceivedReasoning) {
+                setIsThinking(false)
             }
 
             setGenerationComplete(true)
