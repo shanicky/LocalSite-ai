@@ -59,8 +59,6 @@ function getOpenAICompatibleProvider() {
   });
 }
 
-// Note: ai-sdk-ollama uses ollama(modelId) directly, no factory needed
-
 function getLMStudioProvider() {
   return createOpenAICompatible({
     name: 'lm_studio',

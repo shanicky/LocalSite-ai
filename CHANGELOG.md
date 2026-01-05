@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.1] - 2026-01-05
+
+### Fixes
+- **Fixed Ollama provider crash** - Replaced `ollama-ai-provider` with `ai-sdk-ollama@^2.2.0` for AI SDK v5 compatibility
+
 ## [0.5.0] - 2025-12-22
 
 ### Major Changes
