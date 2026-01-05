@@ -4,7 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createCerebras } from '@ai-sdk/cerebras';
-import { createOllama } from 'ollama-ai-provider';
+import { ollama } from 'ai-sdk-ollama';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText, LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from 'ai';
 import { LLMProvider, getProviderApiKey, getProviderBaseUrl } from './config';
@@ -59,10 +59,7 @@ function getOpenAICompatibleProvider() {
   });
 }
 
-function getOllamaProvider() {
-  const baseUrl = getProviderBaseUrl(LLMProvider.OLLAMA);
-  return createOllama({ baseURL: `${baseUrl}/api` });
-}
+// Note: ai-sdk-ollama uses ollama(modelId) directly, no factory needed
 
 function getLMStudioProvider() {
   return createOpenAICompatible({
@@ -319,7 +316,6 @@ class OpenAICompatibleProviderClient implements LLMProviderClient {
 
 // Ollama Provider Client
 class OllamaProviderClient implements LLMProviderClient {
-  private provider = getOllamaProvider();
   private baseUrl = getProviderBaseUrl(LLMProvider.OLLAMA);
 
   async getModels() {
@@ -341,8 +337,14 @@ class OllamaProviderClient implements LLMProviderClient {
   }
 
   getModel(modelId: string): LanguageModel {
-    const baseModel = this.provider(modelId) as unknown as LanguageModel;
-    return wrapWithReasoningMiddleware(baseModel);
+    // Enable Ollama's native thinking support for reasoning models (deepseek-r1, qwen3)
+    // The 'think' option enables the model to return thinking in message.thinking field
+    const baseModel = ollama(modelId, { think: true });
+    // Wrap with extractReasoningMiddleware to handle <think> tags if present
+    return wrapLanguageModel({
+      model: baseModel as Parameters<typeof wrapLanguageModel>[0]['model'],
+      middleware: extractReasoningMiddleware({ tagName: 'think' }),
+    }) as LanguageModel;
   }
 }
 
