@@ -1,5 +1,3 @@
-# LocalSite AI - 0.5.0 Update!
-
 > **What's new?** See the [Changelog](./CHANGELOG.md) for details.
 
 A modern web application that uses AI to generate HTML, CSS, and JavaScript code based on natural language prompts. Simply describe what you want to build, and the AI will create a complete, self-contained web page for you.
